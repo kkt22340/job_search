@@ -30,6 +30,8 @@ export function seniorDraftFromProfileJson(
     tagIds: tagIds.filter((x): x is string => typeof x === "string"),
     bio: typeof o.bio === "string" ? o.bio : "",
     phone: typeof o.phone === "string" ? o.phone : "",
+    resumePhoto:
+      typeof o.resumePhoto === "string" ? o.resumePhoto : "",
     updatedAt:
       typeof o.updatedAt === "string" ? o.updatedAt : base.updatedAt,
   };
@@ -46,6 +48,7 @@ export function seniorDraftToProfileJson(draft: SeniorProfileDraft): Record<
     tagIds: draft.tagIds,
     bio: draft.bio,
     phone: draft.phone,
+    resumePhoto: draft.resumePhoto,
     updatedAt: draft.updatedAt,
   };
 }

@@ -1,4 +1,5 @@
 -- 기존 DB에 이미 profiles 가 있을 때 실행 (신규는 schema.sql 전체 사용)
+-- ⚠️ 최신 스키마·트리거는 supabase/patch_profiles_login_id.sql 를 쓰는 것을 권장합니다.
 -- Supabase SQL Editor 에서 한 번 실행
 
 ALTER TABLE public.profiles
@@ -29,6 +30,8 @@ DECLARE
   ewob boolean;
   byear integer;
 BEGIN
+  PERFORM set_config('row_security', 'off', true);
+
   IF r IN ('employer', 'senior', 'admin') THEN
     resolved_role := r::public.user_role;
   ELSIF (meta ->> 'account_kind') = 'employer_informal' THEN
@@ -37,8 +40,14 @@ BEGIN
     resolved_role := 'senior'::public.user_role;
   END IF;
 
-  ewob := COALESCE((meta ->> 'employer_without_business')::boolean, false);
+  ewob := false;
   IF (meta ->> 'account_kind') = 'employer_informal' THEN
+    ewob := true;
+  ELSIF lower(COALESCE(meta ->> 'employer_without_business', '')) IN (
+    'true',
+    't',
+    '1'
+  ) THEN
     ewob := true;
   END IF;
 
@@ -71,3 +80,5 @@ BEGIN
   RETURN NEW;
 END;
 $$;
+
+ALTER FUNCTION public.handle_new_user() OWNER TO postgres;

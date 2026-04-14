@@ -3,10 +3,12 @@
 import {
   Armchair,
   Calendar,
+  Camera,
   Car,
   Footprints,
   GraduationCap,
   HeartHandshake,
+  Image as ImageIcon,
   MessageCircle,
   Monitor,
   Store,
@@ -14,7 +16,15 @@ import {
   Sunrise,
   type LucideIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+} from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 
 import {
   AVAILABILITY_OPTIONS,
@@ -33,6 +43,12 @@ import { IdentityVerificationModal } from "@/components/auth/identity-verificati
 import { BigButton } from "@/components/ui/big-button";
 import { StepHeader } from "@/components/ui/step-header";
 import { skipIdentityGate } from "@/lib/auth/identity-policy";
+import { compressResumePhotoFile } from "@/lib/images/compress-resume-photo";
+import { queueOpenJobSheetAfterResume } from "@/lib/resume/pending-apply-navigation";
+import {
+  MAIN_VIEW_QUERY,
+  RETURN_JOB_QUERY,
+} from "@/platform/routes";
 import { createClient } from "@/lib/supabase";
 
 const AVAIL_ICONS: Record<string, LucideIcon> = {
@@ -56,6 +72,8 @@ const TAG_ICONS: Record<string, LucideIcon> = {
 const TOTAL_STEPS = 4;
 
 export function SeniorResumeWizard() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const storage = useMemo(() => getSeniorProfileStorage(), []);
   const [step, setStep] = useState(1);
   const [draft, setDraft] = useState<SeniorProfileDraft>(emptySeniorProfileDraft);
@@ -63,6 +81,12 @@ export function SeniorResumeWizard() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [trustModalOpen, setTrustModalOpen] = useState(false);
   const [showTrustCta, setShowTrustCta] = useState(false);
+  const [photoError, setPhotoError] = useState<string | null>(null);
+
+  const galleryInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
 
   const canCloudSyncRef = useRef(false);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -197,6 +221,29 @@ export function SeniorResumeWizard() {
     [runCloudSave, storage]
   );
 
+  const onResumePhotoPicked = useCallback(
+    async (e: ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      e.target.value = "";
+      if (!file) return;
+      setPhotoError(null);
+      try {
+        const dataUrl = await compressResumePhotoFile(file);
+        persist({ ...draftRef.current, resumePhoto: dataUrl });
+      } catch (err) {
+        setPhotoError(
+          err instanceof Error ? err.message : "사진을 넣지 못했어요."
+        );
+      }
+    },
+    [persist]
+  );
+
+  const clearResumePhoto = useCallback(() => {
+    setPhotoError(null);
+    persist({ ...draftRef.current, resumePhoto: "" });
+  }, [persist]);
+
   const toggleId = (list: string[], id: string, max?: number) => {
     const has = list.includes(id);
     if (has) return list.filter((x) => x !== id);
@@ -208,6 +255,8 @@ export function SeniorResumeWizard() {
   const back = () => setStep((s) => Math.max(1, s - 1));
 
   const finalizeSave = useCallback(async () => {
+    const returnJobId = searchParams.get(RETURN_JOB_QUERY)?.trim() ?? "";
+
     const withTime: SeniorProfileDraft = {
       ...draft,
       updatedAt: new Date().toISOString(),
@@ -223,20 +272,30 @@ export function SeniorResumeWizard() {
       setSaveError(null);
       try {
         await upsertSeniorProfileCloud(withTime);
-        alert("간편 이력서를 이 기기와 계정에 저장했어요.");
       } catch (e) {
         const msg =
           e && typeof e === "object" && "message" in e
             ? String((e as { message?: string }).message)
             : "계정 저장에 실패했어요.";
         setSaveError(msg);
+        return;
       }
+    }
+
+    if (returnJobId) {
+      queueOpenJobSheetAfterResume(returnJobId);
+      router.replace(`/?${MAIN_VIEW_QUERY}=jobs`);
+      return;
+    }
+
+    if (canCloudSyncRef.current) {
+      alert("간편 이력서를 이 기기와 계정에 저장했어요.");
     } else {
       alert(
         "이 기기에 저장했어요. 시니어 계정으로 로그인하면 웹·앱에서 같은 이력서를 쓸 수 있어요."
       );
     }
-  }, [draft, storage]);
+  }, [draft, storage, router, searchParams]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -415,6 +474,74 @@ export function SeniorResumeWizard() {
                 className="min-h-[56px] w-full rounded-2xl border-2 border-zinc-200 bg-white px-4 text-[18px] outline-none focus:border-blue-500"
               />
             </label>
+
+            <div className="mb-6">
+              <span className="mb-2 block text-[16px] font-medium text-zinc-700">
+                이력서 사진 (선택)
+              </span>
+              <p className="mb-3 text-[14px] leading-relaxed text-zinc-500">
+                갤러리에서 고르거나 카메라로 촬영할 수 있어요.
+              </p>
+              <div className="flex flex-col gap-3 sm:flex-row">
+                <button
+                  type="button"
+                  onClick={() => galleryInputRef.current?.click()}
+                  className="flex min-h-[52px] flex-1 items-center justify-center gap-2 rounded-2xl border-2 border-zinc-200 bg-white px-4 text-[16px] font-semibold text-zinc-800 active:bg-zinc-50"
+                >
+                  <ImageIcon className="h-5 w-5 shrink-0" strokeWidth={2} />
+                  갤러리에서 선택
+                </button>
+                <button
+                  type="button"
+                  onClick={() => cameraInputRef.current?.click()}
+                  className="flex min-h-[52px] flex-1 items-center justify-center gap-2 rounded-2xl border-2 border-zinc-200 bg-white px-4 text-[16px] font-semibold text-zinc-800 active:bg-zinc-50"
+                >
+                  <Camera className="h-5 w-5 shrink-0" strokeWidth={2} />
+                  카메라로 촬영
+                </button>
+              </div>
+              <input
+                ref={galleryInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={onResumePhotoPicked}
+              />
+              <input
+                ref={cameraInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className="hidden"
+                onChange={onResumePhotoPicked}
+              />
+              {photoError ? (
+                <p
+                  className="mt-2 text-[14px] text-red-700"
+                  role="alert"
+                >
+                  {photoError}
+                </p>
+              ) : null}
+              {draft.resumePhoto ? (
+                <div className="mt-4 flex flex-col items-start gap-3 sm:flex-row sm:items-center">
+                  {/* eslint-disable-next-line @next/next/no-img-element -- user-provided data URL */}
+                  <img
+                    src={draft.resumePhoto}
+                    alt="첨부한 이력서 사진 미리보기"
+                    className="h-36 w-28 rounded-xl border-2 border-zinc-200 object-cover"
+                  />
+                  <button
+                    type="button"
+                    onClick={clearResumePhoto}
+                    className="min-h-[48px] rounded-xl border-2 border-zinc-300 bg-white px-4 text-[15px] font-semibold text-zinc-800"
+                  >
+                    사진 제거
+                  </button>
+                </div>
+              ) : null}
+            </div>
+
             <label className="mb-6 block">
               <span className="mb-2 block text-[16px] font-medium text-zinc-700">
                 나를 소개하는 한 줄 (선택)

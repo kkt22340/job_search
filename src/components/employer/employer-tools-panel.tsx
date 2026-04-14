@@ -1,6 +1,6 @@
 "use client";
 
-import { Calculator, ShieldCheck } from "lucide-react";
+import { Calculator, Megaphone, ShieldCheck } from "lucide-react";
 import Link from "next/link";
 import {
   useCallback,
@@ -14,7 +14,7 @@ import { IdentityVerificationModal } from "@/components/auth/identity-verificati
 import { EmployerTrustNotice } from "@/components/employer/employer-trust-notice";
 import { skipIdentityGate } from "@/lib/auth/identity-policy";
 import { createClient } from "@/lib/supabase";
-import { BigButton } from "@/components/ui/big-button";
+import { BigButton, bigButtonClassNames } from "@/components/ui/big-button";
 import {
   estimateEmployerMonthlyCost,
   formatKrw,
@@ -155,32 +155,49 @@ export function EmployerToolsPanel() {
               </p>
             </div>
           </div>
-          <div className="flex shrink-0 flex-col items-end gap-2 pt-1">
-            {employerNeedsId ? (
-              <button
-                type="button"
-                onClick={() => setEmployerIdGateOpen(true)}
-                className="text-[15px] font-semibold text-blue-600 underline"
-              >
-                공고 등록
-              </button>
-            ) : (
-              <Link
-                href="/employer/post"
-                className="text-[15px] font-semibold text-blue-600 underline"
-              >
-                공고 등록
-              </Link>
-            )}
-            <Link
-              href="/login"
-              className="text-[15px] font-medium text-zinc-600 underline"
-            >
-              로그인
-            </Link>
-          </div>
+          <Link
+            href="/login"
+            className="shrink-0 pt-1 text-[15px] font-medium text-zinc-600 underline underline-offset-2"
+          >
+            로그인
+          </Link>
         </div>
       </header>
+
+      <div className="shrink-0 border-b border-zinc-200 bg-gradient-to-b from-blue-50/90 to-zinc-100 px-4 py-4">
+        <div className="mx-auto max-w-lg rounded-3xl border border-blue-200/90 bg-white p-4 shadow-sm ring-1 ring-blue-500/10">
+          <div className="mb-4 flex gap-3">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-blue-600 text-white">
+              <Megaphone className="h-6 w-6" strokeWidth={2} aria-hidden />
+            </div>
+            <div className="min-w-0 pt-0.5">
+              <h2 className="text-[18px] font-semibold leading-snug text-zinc-900">
+                일자리를 구인 중이신가요?
+              </h2>
+              <p className="mt-1 text-[14px] leading-relaxed text-zinc-600">
+                구인 공고를 올리면 시니어 구직자가 지도에서 보고 지원할 수 있어요.
+                제목·시급·근무지를 입력한 뒤 검수를 거칩니다.
+              </p>
+            </div>
+          </div>
+          {employerNeedsId ? (
+            <BigButton
+              type="button"
+              variant="primary"
+              onClick={() => setEmployerIdGateOpen(true)}
+            >
+              구인 공고 등록하기
+            </BigButton>
+          ) : (
+            <Link
+              href="/employer/post"
+              className={`${bigButtonClassNames.base} ${bigButtonClassNames.primary}`}
+            >
+              구인 공고 등록하기
+            </Link>
+          )}
+        </div>
+      </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-32 pt-6">
         <div className="mx-auto max-w-lg space-y-10">

@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState, useTransition } from "react";
 import { Briefcase, ClipboardList, FileUser, Search, Users } from "lucide-react";
 
 import { useAuthSession } from "@/hooks/use-auth-session";
+import { isSeniorRoleForClient } from "@/lib/auth/resolve-senior-role";
 import { createClient } from "@/lib/supabase";
 import {
   MAIN_VIEW_QUERY,
@@ -167,7 +168,7 @@ export function MainAppShell({
         .eq("id", session.user.id)
         .maybeSingle();
       if (cancelled) return;
-      if (prof?.role === "senior") setProfileRole("senior");
+      if (isSeniorRoleForClient(prof, session.user)) setProfileRole("senior");
       else if (prof?.role === "employer") setProfileRole("employer");
       else setProfileRole("guest");
     })();

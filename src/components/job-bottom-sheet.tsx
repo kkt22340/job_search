@@ -1,11 +1,23 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 
 import { applyToJobAction } from "@/app/(main)/actions/apply-to-job";
 import { JobTrustBadges } from "@/components/job/job-trust-badges";
-import { MAIN_HOME_WITH_RESUME_TAB } from "@/platform/routes";
+import { isResumeCompleteForApply } from "@/domain/senior-profile";
+import { isSeniorRoleForClient } from "@/lib/auth/resolve-senior-role";
+import {
+  setResumeReturnMode,
+  type ResumeReturnPanelMode,
+} from "@/lib/resume/pending-apply-navigation";
+import { getSeniorProfileStorage } from "@/lib/storage/senior-profile-storage";
+import {
+  MAIN_VIEW_QUERY,
+  MAIN_VIEW_RESUME,
+  RETURN_JOB_QUERY,
+} from "@/platform/routes";
 import { createClient } from "@/lib/supabase";
 import type { JobPin } from "@/types/job";
 
@@ -13,6 +25,8 @@ type Props = {
   job: JobPin | null;
   onClose: () => void;
   onApplyStateChange?: () => void;
+  /** 알바 찾기에서 열린 시트 — 이력서 작성 후 같은 탭(리스트/지도/지역)으로 복귀 */
+  resumePanelMode?: ResumeReturnPanelMode;
 };
 
 type ApplyUiState =
@@ -21,10 +35,17 @@ type ApplyUiState =
   | { kind: "anon" }
   | { kind: "not_senior" }
   | { kind: "can_apply" }
+  | { kind: "need_resume" }
   | { kind: "already" }
   | { kind: "error"; message: string };
 
-export function JobBottomSheet({ job, onClose, onApplyStateChange }: Props) {
+export function JobBottomSheet({
+  job,
+  onClose,
+  onApplyStateChange,
+  resumePanelMode = "list",
+}: Props) {
+  const router = useRouter();
   const open = job !== null;
   const [applyUi, setApplyUi] = useState<ApplyUiState>({ kind: "idle" });
   const [applyMessage, setApplyMessage] = useState<string | null>(null);
@@ -57,7 +78,7 @@ export function JobBottomSheet({ job, onClose, onApplyStateChange }: Props) {
         .eq("id", user.id)
         .maybeSingle();
       if (cancelled) return;
-      if (profile?.role !== "senior") {
+      if (!isSeniorRoleForClient(profile, user)) {
         setApplyUi({ kind: "not_senior" });
         return;
       }
@@ -66,10 +87,16 @@ export function JobBottomSheet({ job, onClose, onApplyStateChange }: Props) {
         .select("id")
         .eq("job_id", job.id)
         .eq("senior_id", user.id)
+        .neq("status", "withdrawn")
         .maybeSingle();
       if (cancelled) return;
       if (existing) {
         setApplyUi({ kind: "already" });
+        return;
+      }
+      const draft = getSeniorProfileStorage().load();
+      if (!isResumeCompleteForApply(draft)) {
+        setApplyUi({ kind: "need_resume" });
         return;
       }
       setApplyUi({ kind: "can_apply" });
@@ -81,6 +108,15 @@ export function JobBottomSheet({ job, onClose, onApplyStateChange }: Props) {
       cancelled = true;
     };
   }, [job?.id]);
+
+  const goWriteResume = () => {
+    if (!job) return;
+    setResumeReturnMode(resumePanelMode);
+    router.push(
+      `/?${MAIN_VIEW_QUERY}=${MAIN_VIEW_RESUME}&${RETURN_JOB_QUERY}=${encodeURIComponent(job.id)}`
+    );
+    onClose();
+  };
 
   const onApply = () => {
     if (!job) return;
@@ -165,14 +201,8 @@ export function JobBottomSheet({ job, onClose, onApplyStateChange }: Props) {
                 <p className="font-medium text-zinc-900">이력서와 지원</p>
                 <p className="mt-1">
                   「이력서」 탭에서 적어 둔 간편 이력서는 고용주가 지원자를
-                  볼 때 참고할 수 있어요. 미리{" "}
-                  <Link
-                    href={MAIN_HOME_WITH_RESUME_TAB}
-                    className="font-semibold text-blue-600 underline"
-                  >
-                    이력서 작성
-                  </Link>
-                  을 권장해요.
+                  볼 때 참고할 수 있어요. 근무 가능 시간과 관심 분야를 고르면
+                  지원할 수 있어요.
                 </p>
               </div>
 
@@ -199,6 +229,22 @@ export function JobBottomSheet({ job, onClose, onApplyStateChange }: Props) {
                   시니어(구직) 회원만 이 공고에 지원할 수 있어요. 고용주로
                   로그인한 경우, 다른 계정으로 가입하거나 공고를 등록해 보세요.
                 </p>
+              ) : null}
+
+              {applyUi.kind === "need_resume" ? (
+                <div className="flex flex-col gap-2">
+                  <button
+                    type="button"
+                    onClick={goWriteResume}
+                    className="flex h-[60px] w-full items-center justify-center rounded-2xl bg-blue-600 text-[18px] font-semibold text-white active:bg-blue-700"
+                  >
+                    지원서 작성하러 가기
+                  </button>
+                  <p className="text-center text-[14px] leading-snug text-zinc-500">
+                    근무 가능 시간·관심 분야를 고른 뒤 저장하면, 이 공고
+                    화면으로 돌아와 지원할 수 있어요.
+                  </p>
+                </div>
               ) : null}
 
               {applyUi.kind === "can_apply" ? (

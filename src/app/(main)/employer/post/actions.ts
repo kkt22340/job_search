@@ -23,13 +23,33 @@ export async function createJobPosting(input: {
   description: string;
   wageHourly: number;
   address: string;
+  workPeriod: "one_off" | "short" | "long";
+  workStartDate?: string;
+  workEndDate?: string;
 }): Promise<CreateJobPostingResult> {
   const title = input.title.trim();
   const description = input.description.trim();
   const address = input.address.trim();
+  const workPeriod = input.workPeriod;
+  const workStartDate = input.workStartDate?.trim() ?? "";
+  const workEndDate = input.workEndDate?.trim() ?? "";
 
   if (!title || !description || !address) {
     return { ok: false, error: "제목·업무 내용·근무지를 입력해 주세요." };
+  }
+  if (workPeriod !== "one_off" && workPeriod !== "short" && workPeriod !== "long") {
+    return { ok: false, error: "아르바이트 기간을 선택해 주세요." };
+  }
+  if (workStartDate && Number.isNaN(Date.parse(workStartDate))) {
+    return { ok: false, error: "근무 시작일 형식이 올바르지 않습니다." };
+  }
+  if (workEndDate && Number.isNaN(Date.parse(workEndDate))) {
+    return { ok: false, error: "근무 종료일 형식이 올바르지 않습니다." };
+  }
+  if (workPeriod === "one_off") {
+    if (!workStartDate) {
+      return { ok: false, error: "일회성 공고는 근무일을 선택해 주세요." };
+    }
   }
 
   if (!Number.isFinite(input.wageHourly) || isBelowMinimumHourlyWage(input.wageHourly)) {
@@ -94,6 +114,9 @@ export async function createJobPosting(input: {
       tags,
       wage_hourly: input.wageHourly,
       employment_type: "파트",
+      work_period: workPeriod,
+      work_start_date: workStartDate || null,
+      work_end_date: (workEndDate || (workPeriod === "one_off" ? workStartDate : "")) || null,
       lat: coords.lat,
       lng: coords.lng,
       address,

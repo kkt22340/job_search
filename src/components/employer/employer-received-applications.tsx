@@ -1,9 +1,11 @@
 "use client";
 
 import { Users } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
-import { createClient } from "@/lib/supabase";
+import { loadEmployerApplicationsList } from "@/app/(main)/actions/employer-applications-list";
+import { setApplicationHiredAction } from "@/app/(main)/actions/set-application-hired";
+import { BigButton } from "@/components/ui/big-button";
 
 type Row = {
   id: string;
@@ -11,6 +13,8 @@ type Row = {
   status: string;
   jobTitle: string;
   seniorLabel: string;
+  contactPrimary: string;
+  contactSecondary: string | null;
 };
 
 const STATUS_LABEL: Record<string, string> = {
@@ -21,104 +25,61 @@ const STATUS_LABEL: Record<string, string> = {
   rejected: "불합격",
 };
 
+function canMarkHired(status: string) {
+  return status === "applied" || status === "reviewing";
+}
+
 /**
  * 내 공고에 달린 지원 목록 (고용주·RLS).
  */
 export function EmployerReceivedApplications() {
   const [rows, setRows] = useState<Row[] | null>(null);
   const [hint, setHint] = useState<string | null>(null);
+  const [hiringId, setHiringId] = useState<string | null>(null);
+  const [hireError, setHireError] = useState<string | null>(null);
+
+  const loadList = useCallback(async () => {
+    try {
+      const result = await loadEmployerApplicationsList();
+      if (!result.ok) {
+        setRows([]);
+        setHint(result.error);
+        return;
+      }
+      setHint(result.hint);
+      setRows(result.rows);
+    } catch (e) {
+      setRows([]);
+      setHint(
+        e instanceof Error
+          ? e.message
+          : "불러오지 못했어요. 네트워크를 확인한 뒤 다시 시도해 주세요."
+      );
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
-      const supabase = createClient();
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) {
-        if (!cancelled) {
-          setRows([]);
-          setHint("로그인하면 등록한 공고에 들어온 지원을 볼 수 있어요.");
-        }
-        return;
-      }
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("role")
-        .eq("id", user.id)
-        .maybeSingle();
-      if (profile?.role !== "employer") {
-        if (!cancelled) {
-          setRows([]);
-          setHint("고용주 계정에서만 지원 목록을 볼 수 있어요.");
-        }
-        return;
-      }
-
-      const { data: jobs } = await supabase
-        .from("job_postings")
-        .select("id, title")
-        .eq("employer_id", user.id);
-
-      const jobList = jobs ?? [];
-      const jobIds = jobList.map((j) => j.id);
-      const titleByJob = new Map(
-        jobList.map((j) => [j.id, j.title?.trim() || "제목 없음"])
-      );
-
-      if (jobIds.length === 0) {
-        if (!cancelled) {
-          setRows([]);
-          setHint("등록한 공고가 없어요. 공고를 올리면 지원이 여기에 표시돼요.");
-        }
-        return;
-      }
-
-      const { data: apps, error } = await supabase
-        .from("job_applications")
-        .select("id, created_at, status, job_id, senior_id")
-        .in("job_id", jobIds)
-        .order("created_at", { ascending: false });
-
-      if (error) {
-        if (!cancelled) {
-          setRows([]);
-          setHint(error.message);
-        }
-        return;
-      }
-
-      const list = apps ?? [];
-      const seniorIds = [...new Set(list.map((a) => a.senior_id))];
-      const { data: seniors } = await supabase
-        .from("profiles")
-        .select("id, display_name")
-        .in("id", seniorIds);
-
-      const nameBySenior = new Map(
-        (seniors ?? []).map((s) => [
-          s.id,
-          (s.display_name as string | null)?.trim() || "이름 미등록",
-        ])
-      );
-
+    void (async () => {
+      await loadList();
       if (cancelled) return;
-
-      setHint(null);
-      setRows(
-        list.map((a) => ({
-          id: a.id,
-          created_at: a.created_at,
-          status: a.status,
-          jobTitle: titleByJob.get(a.job_id) ?? "—",
-          seniorLabel: nameBySenior.get(a.senior_id) ?? "지원자",
-        }))
-      );
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [loadList]);
+
+  async function onMarkHired(applicationId: string) {
+    setHireError(null);
+    setHiringId(applicationId);
+    const res = await setApplicationHiredAction(applicationId);
+    setHiringId(null);
+    if (!res.ok) {
+      setHireError(res.error);
+      return;
+    }
+    await loadList();
+  }
 
   return (
     <section aria-labelledby="recv-apps-heading">
@@ -142,6 +103,14 @@ export function EmployerReceivedApplications() {
               아직 지원이 없어요. 공고가 승인·노출되면 시니어가 지원할 수 있어요.
             </p>
           ) : null}
+          {hireError ? (
+            <p
+              className="mb-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-[15px] text-red-900"
+              role="alert"
+            >
+              {hireError}
+            </p>
+          ) : null}
           {rows.length > 0 ? (
             <ul className="space-y-3">
               {rows.map((r) => (
@@ -155,6 +124,14 @@ export function EmployerReceivedApplications() {
                   <p className="mt-1 text-[15px] text-zinc-700">
                     지원자: {r.seniorLabel}
                   </p>
+                  <p className="mt-2 text-[15px] leading-relaxed text-zinc-800">
+                    {r.contactPrimary}
+                  </p>
+                  {r.contactSecondary ? (
+                    <p className="mt-1 text-[14px] leading-relaxed text-zinc-500">
+                      {r.contactSecondary}
+                    </p>
+                  ) : null}
                   <div className="mt-2 flex flex-wrap items-center gap-2 text-[14px] text-zinc-500">
                     <span>
                       {new Date(r.created_at).toLocaleString("ko-KR", {
@@ -166,6 +143,20 @@ export function EmployerReceivedApplications() {
                       {STATUS_LABEL[r.status] ?? r.status}
                     </span>
                   </div>
+                  {canMarkHired(r.status) ? (
+                    <div className="mt-4">
+                      <BigButton
+                        type="button"
+                        variant="secondary"
+                        disabled={hiringId === r.id}
+                        onClick={() => void onMarkHired(r.id)}
+                      >
+                        {hiringId === r.id
+                          ? "처리 중…"
+                          : "채용 확정 (연락처 전체 공개)"}
+                      </BigButton>
+                    </div>
+                  ) : null}
                 </li>
               ))}
             </ul>

@@ -2,25 +2,39 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
+import { resolveAuthEmailForPasswordLogin } from "@/lib/auth/login-id";
 import { createClient } from "@/lib/supabase";
 
 export default function LoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState("");
+  const [loginIdOrEmail, setLoginIdOrEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [justRegistered, setJustRegistered] = useState(false);
+
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    setJustRegistered(q.get("registered") === "1");
+  }, []);
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     setLoading(true);
     try {
+      const authEmail = resolveAuthEmailForPasswordLogin(loginIdOrEmail);
+      if (!authEmail) {
+        setError(
+          "휴대폰 번호(010…) 또는 예전 영문 아이디·이메일을 입력해 주세요."
+        );
+        return;
+      }
       const supabase = createClient();
       const { error: signError } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
+        email: authEmail,
         password,
       });
       if (signError) {
@@ -42,39 +56,48 @@ export default function LoginPage() {
         로그인
       </h1>
       <p className="mt-2 text-[16px] leading-relaxed text-zinc-600">
-        <strong>고용주</strong>는 가입 시 적은 이메일과 비밀번호로 로그인해요.
+        <strong>가입 시 적은 휴대폰 번호</strong>와 비밀번호로 로그인해요. (예전
+        영문 아이디·이메일 가입 계정은 예전 방식 그대로 입력할 수 있어요.)
       </p>
+
+      {justRegistered ? (
+        <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-[15px] leading-relaxed text-emerald-950">
+          <p className="font-medium text-emerald-900">가입이 완료되었어요</p>
+          <p className="mt-1 text-emerald-900/95">
+            아래에서 휴대폰 번호와 비밀번호로 로그인해 주세요.
+          </p>
+        </div>
+      ) : null}
 
       <div className="mt-4 rounded-2xl border border-violet-200 bg-violet-50/90 px-4 py-3 text-[15px] leading-relaxed text-violet-950">
         <p className="font-medium text-violet-900">시니어(이메일 없이 가입)</p>
         <p className="mt-1 text-violet-900/95">
-          같은 기기·브라우저에서는 자동으로 로그인된 상태로 쓸 수 있어요. 다른
-          기기에서는 아직 휴대폰 연동 전이라{" "}
+          예전에 익명으로만 쓰던 세션이 있을 수 있어요. 휴대폰으로 가입했다면
+          위에서 <strong>번호·비밀번호</strong>로 로그인해 보세요.{" "}
           <Link
             href="/signup?kind=senior"
             className="font-semibold text-violet-700 underline"
           >
-            회원가입에서 시니어로 다시 시작
+            새로 시니어 가입
           </Link>
-          해 주세요. 추후 휴대폰으로 로그인·계정 연결을 넣을 예정이에요.
         </p>
       </div>
 
       <form onSubmit={onSubmit} className="mt-8 flex flex-col gap-5">
         <div>
           <label
-            htmlFor="login-email"
+            htmlFor="login-id"
             className="mb-2 block text-[17px] font-medium text-zinc-800"
           >
-            이메일 (고용주)
+            휴대폰 번호 (또는 예전 아이디·이메일)
           </label>
           <input
-            id="login-email"
-            type="email"
-            autoComplete="email"
+            id="login-id"
+            type="text"
+            autoComplete="username tel"
             required
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            value={loginIdOrEmail}
+            onChange={(e) => setLoginIdOrEmail(e.target.value)}
             className="min-h-[56px] w-full rounded-2xl border-2 border-zinc-200 bg-white px-4 text-[18px] text-zinc-900 outline-none ring-blue-500/30 focus:border-blue-500 focus:ring-4"
           />
         </div>

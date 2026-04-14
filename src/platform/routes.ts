@@ -15,6 +15,8 @@ export type MainTab = "jobs" | "resume" | "applications" | "manage" | "inbox";
 
 /** URL 동기화: `/?view=resume` 등으로 탭 북마크·공유 */
 export const MAIN_VIEW_QUERY = "view" as const;
+/** 이력서 저장 후 돌아갈 공고 id (쿼리) */
+export const RETURN_JOB_QUERY = "returnJob" as const;
 export const MAIN_VIEW_RESUME = "resume" as const;
 export const MAIN_VIEW_APPLICATIONS = "applications" as const;
 export const MAIN_VIEW_MANAGE = "manage" as const;

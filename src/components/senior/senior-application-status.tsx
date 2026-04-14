@@ -3,7 +3,9 @@
 import { ClipboardList } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { withdrawApplicationAction } from "@/app/(main)/actions/withdraw-application";
 import { JobBottomSheet } from "@/components/job-bottom-sheet";
+import { isSeniorRoleForClient } from "@/lib/auth/resolve-senior-role";
 import { jobPinFromPostingRow } from "@/lib/job-pin-from-posting";
 import { createClient } from "@/lib/supabase";
 import type { JobPin } from "@/types/job";
@@ -19,7 +21,6 @@ type Row = {
 
 const STATUS_LABEL: Record<string, string> = {
   applied: "지원됨",
-  withdrawn: "철회",
   reviewing: "검토 중",
   hired: "채용 확정",
   rejected: "불합격",
@@ -33,7 +34,9 @@ const COPY = {
     "\ud56d\ubaa9\uc744 \ub20c\ub7ec \uacf5\uace0 \uc0c1\uc138\ub97c \ub2e4\uc2dc \ubcfc \uc218 \uc788\uc5b4\uc694.",
   loading: "\ubd88\ub7ec\uc624\ub294 \uc911\u2026",
   empty:
-    "\uc544\uc9c1 \uc9c0\uc6d0\ud55c \uacf5\uace0\uac00 \uc5c6\uc5b4\uc694. \u300c\uc54c\ubc14 \ucc3e\uae30\u300d\uc5d0\uc11c \uacf5\uace0\ub97c \ubcf4\uace0 \uc9c0\uc6d0\ud560 \uc218 \uc788\uc5b4\uc694.",
+    "\uc9c0\uc6d0\ud558\uc2e0 \ud56c\ubaa9\uc774 \uc544\uc9c1 \uc5c6\uc5b4\uc694. \u300c\uc54c\ubc14 \ucc3e\uae30\u300d\uc5d0\uc11c \uacf5\uace0\ub97c \ubcf4\uace0 \uc9c0\uc6d0\ud574 \ubcf4\uc138\uc694.",
+  hintFetchError:
+    "\ubaa9\ub85d\uc744 \uc7a0\uc2dc \ubd88\ub7ec\uc624\uc9c0 \ubabb\ud588\uc5b4\uc694. \uc7a0\uc2dc \ud6c4 \ub2e4\uc2dc \uc2dc\ub3c4\ud574 \uc8fc\uc138\uc694.",
   detail: "\uc0c1\uc138 \ubcf4\uae30",
   hintLogin:
     "\ub85c\uadf8\uc778\ud558\uba74 \uc9c0\uc6d0 \ud604\ud669\uc744 \ubcfc \uc218 \uc788\uc5b4\uc694.",
@@ -42,7 +45,14 @@ const COPY = {
   dash: "\u2014",
   companyFallback: "\ub4f1\ub85d \uc5c5\uccb4",
   titleFallback: "\uc81c\ubaa9 \uc5c6\uc74c",
+  cancel: "\uc9c0\uc6d0 \ucde8\uc18c",
+  cancelConfirm:
+    "\uc774 \uacf5\uace0\uc5d0 \ub300\ud55c \uc9c0\uc6d0\uc744 \ucde8\uc18c\ud560\uae4c\uc694?",
 } as const;
+
+function canWithdrawStatus(status: string): boolean {
+  return status === "applied" || status === "reviewing";
+}
 
 export function SeniorApplicationStatus() {
   const [rows, setRows] = useState<Row[] | null>(null);
@@ -51,6 +61,8 @@ export function SeniorApplicationStatus() {
     () => new Map()
   );
   const [sheetJob, setSheetJob] = useState<JobPin | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [withdrawingId, setWithdrawingId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -68,12 +80,17 @@ export function SeniorApplicationStatus() {
         return;
       }
 
-      const { data: profile } = await supabase
+      const { data: profile, error: profileError } = await supabase
         .from("profiles")
         .select("role")
         .eq("id", user.id)
         .maybeSingle();
-      if (profile?.role !== "senior") {
+
+      const seniorOk =
+        (!profileError && isSeniorRoleForClient(profile, user)) ||
+        (Boolean(profileError) && isSeniorRoleForClient(null, user));
+
+      if (!seniorOk) {
         if (!cancelled) {
           setRows([]);
           setHint(COPY.hintRole);
@@ -86,12 +103,13 @@ export function SeniorApplicationStatus() {
         .from("job_applications")
         .select("id, created_at, status, job_id")
         .eq("senior_id", user.id)
+        .neq("status", "withdrawn")
         .order("created_at", { ascending: false });
 
       if (error) {
         if (!cancelled) {
           setRows([]);
-          setHint(error.message);
+          setHint(COPY.hintFetchError);
           setPinByJobId(new Map());
         }
         return;
@@ -117,17 +135,20 @@ export function SeniorApplicationStatus() {
       const employerIds = [
         ...new Set(jobRows.map((j) => j.employer_id as string)),
       ];
-      const { data: employers } = await supabase
-        .from("profiles")
-        .select("id, display_name")
-        .in("id", employerIds);
-
-      const companyByEmployer = new Map(
-        (employers ?? []).map((p) => [
-          p.id as string,
-          ((p.display_name as string | null) ?? "").trim(),
-        ])
+      const { data: employers, error: empRpcError } = await supabase.rpc(
+        "employer_profiles_public",
+        { p_ids: employerIds }
       );
+
+      const companyByEmployer = new Map<string, string>();
+      if (!empRpcError) {
+        for (const p of (employers ?? []) as {
+          id: string;
+          display_name: string | null;
+        }[]) {
+          companyByEmployer.set(p.id, (p.display_name ?? "").trim());
+        }
+      }
 
       const pins = new Map<string, JobPin>();
       const metaById = new Map<string, { title: string; company: string }>();
@@ -178,7 +199,22 @@ export function SeniorApplicationStatus() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [reloadKey]);
+
+  async function handleWithdraw(applicationId: string) {
+    if (!window.confirm(COPY.cancelConfirm)) return;
+    setWithdrawingId(applicationId);
+    try {
+      const result = await withdrawApplicationAction(applicationId);
+      if (!result.ok) {
+        window.alert(result.error);
+        return;
+      }
+      setReloadKey((k) => k + 1);
+    } finally {
+      setWithdrawingId(null);
+    }
+  }
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-zinc-100">
@@ -250,6 +286,21 @@ export function SeniorApplicationStatus() {
                           {COPY.detail}
                         </p>
                       </button>
+                      {canWithdrawStatus(r.status) ? (
+                        <div className="mt-3 border-t border-zinc-100 pt-3">
+                          <button
+                            type="button"
+                            className="w-full rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-[15px] font-medium text-red-700 transition hover:bg-red-100 disabled:opacity-60"
+                            disabled={withdrawingId === r.id}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void handleWithdraw(r.id);
+                            }}
+                          >
+                            {COPY.cancel}
+                          </button>
+                        </div>
+                      ) : null}
                     </li>
                   ))}
                 </ul>

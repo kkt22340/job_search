@@ -20,7 +20,7 @@ type Props = {
 export function BottomNav({ activeTab, onTabChange, items }: Props) {
   return (
     <nav
-      className="fixed bottom-0 left-0 right-0 z-30 border-t border-zinc-200 bg-white/95 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-0 backdrop-blur-md"
+      className="shrink-0 border-t border-zinc-200 bg-white/95 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-0 backdrop-blur-md"
       aria-label="주요 메뉴"
     >
       <AuthNavStrip />

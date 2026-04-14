@@ -310,7 +310,7 @@
 | 요구 | 상태 | 비고 |
 |------|------|------|
 | 직업정보제공사업 신고(운영) | `[미구현]` | 사업 절차 |
-| 연락처 마스킹 API·고용주 MFA | `[미구현]` | |
+| 연락처 마스킹 API·고용주 MFA | `[부분]` | **마스킹:** 고용주「받은 지원」은 `loadEmployerApplicationsList` + 서비스 롤로 지원자 연락처 조회 후 마스킹 — 채용 확정 전 `010-****-1234`. **RLS:** `profiles`는 본인·관리자만 SELECT, 타인 phone은 클라 불가 — 시니어→고용주 표시명은 RPC `employer_profiles_public`. 패치: `supabase/patch_profiles_rls_self_and_rpc.sql`. **MFA** `[미구현]` |
 
 ---
 

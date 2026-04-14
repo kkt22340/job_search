@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { CalendarDays, ChevronDown, ChevronUp } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState, useTransition } from "react";
 
@@ -14,6 +14,15 @@ import {
   parseHourlyWageInput,
   monthlyHoursSuggestFourInsurance,
 } from "@/lib/labor/minimum-wage";
+
+function formatDateLabel(dateIso: string): string {
+  const s = dateIso.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return s || "(작성일 협의)";
+  const [y, m, d] = s.split("-");
+  const mm = String(Number(m));
+  const dd = String(Number(d));
+  return `${y}년 ${mm}월 ${dd}일`;
+}
 
 function FieldLabel({
   id,
@@ -41,12 +50,16 @@ export function JobPostDraftForm() {
   const [successId, setSuccessId] = useState<string | null>(null);
 
   const [title, setTitle] = useState("");
+  const [workPeriod, setWorkPeriod] = useState<"one_off" | "short" | "long">("short");
   const [employerName, setEmployerName] = useState("");
-  const [workerPreviewName, setWorkerPreviewName] = useState("근로자(확정 전)");
   const [wageRaw, setWageRaw] = useState("");
   const [weeklyHoursRaw, setWeeklyHoursRaw] = useState("20");
+  const [oneOffHoursRaw, setOneOffHoursRaw] = useState("8");
   const [workplace, setWorkplace] = useState("");
   const [description, setDescription] = useState("");
+  const [showSchedule, setShowSchedule] = useState(false);
+  const [workStartDate, setWorkStartDate] = useState("");
+  const [workEndDate, setWorkEndDate] = useState("");
   const [showContract, setShowContract] = useState(false);
   const [showTaxGuide, setShowTaxGuide] = useState(false);
   const [showLegal, setShowLegal] = useState(true);
@@ -59,10 +72,15 @@ export function JobPostDraftForm() {
     const n = parseFloat(weeklyHoursRaw.replace(/,/g, ""));
     return Number.isFinite(n) && n > 0 ? n : null;
   }, [weeklyHoursRaw]);
+  const oneOffHoursParsed = useMemo(() => {
+    const n = parseFloat(oneOffHoursRaw.replace(/,/g, ""));
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }, [oneOffHoursRaw]);
 
   const belowMin =
     hourlyParsed !== null && isBelowMinimumHourlyWage(hourlyParsed);
   const insuranceHint =
+    workPeriod === "long" &&
     weeklyHoursParsed !== null &&
     monthlyHoursSuggestFourInsurance(weeklyHoursParsed);
 
@@ -75,7 +93,9 @@ export function JobPostDraftForm() {
 
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!canSubmit || hourlyParsed === null || weeklyHoursParsed === null) return;
+    if (!canSubmit || hourlyParsed === null) return;
+    if (workPeriod === "long" && weeklyHoursParsed === null) return;
+    if (workPeriod === "one_off" && oneOffHoursParsed === null) return;
     setFormError(null);
     setSuccessId(null);
     startTransition(async () => {
@@ -84,6 +104,9 @@ export function JobPostDraftForm() {
         description: description.trim(),
         wageHourly: hourlyParsed,
         address: workplace.trim(),
+        workPeriod,
+        workStartDate: workStartDate || undefined,
+        workEndDate: workEndDate || undefined,
       });
       if (!result.ok) {
         setFormError(result.error);
@@ -167,6 +190,101 @@ export function JobPostDraftForm() {
         </div>
 
         <div>
+          <FieldLabel id="jp-period">아르바이트 기간</FieldLabel>
+          <div
+            id="jp-period"
+            className="grid grid-cols-3 gap-2 rounded-2xl bg-zinc-100 p-2"
+          >
+            {(
+              [
+                { id: "one_off", label: "일회성", sub: "하루·1회" },
+                { id: "short", label: "단기", sub: "수일~수주" },
+                { id: "long", label: "장기", sub: "1개월+" },
+              ] as const
+            ).map((opt) => {
+              const on = workPeriod === opt.id;
+              return (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => setWorkPeriod(opt.id)}
+                  className={`min-h-[64px] rounded-2xl border-2 px-3 py-3 text-left transition-colors ${
+                    on
+                      ? "border-blue-500 bg-white text-blue-900"
+                      : "border-transparent bg-transparent text-zinc-800 hover:bg-white/70"
+                  }`}
+                  aria-pressed={on}
+                >
+                  <div className="text-[16px] font-semibold leading-tight">
+                    {opt.label}
+                  </div>
+                  <div className="mt-1 text-[13px] text-zinc-500">{opt.sub}</div>
+                </button>
+              );
+            })}
+          </div>
+          <p className="mt-2 text-[14px] leading-relaxed text-zinc-500">
+            단기·일회성 공고도 적극 노출할 수 있도록, 기간 성격을 먼저 골라 주세요.
+          </p>
+        </div>
+
+        <section aria-labelledby="jp-schedule-heading" className="rounded-2xl border-2 border-zinc-200 bg-white px-4 py-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h3 id="jp-schedule-heading" className="text-[17px] font-semibold text-zinc-900">
+                구체적인 근무일 (선택)
+              </h3>
+              <p className="mt-1 text-[14px] leading-relaxed text-zinc-500">
+                클릭하면 달력이 열려요. 일회성 공고는 근무일을 1개 선택하는 걸 권장해요.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowSchedule((v) => !v)}
+              className="shrink-0 inline-flex min-h-[44px] items-center gap-2 rounded-xl border-2 border-zinc-200 bg-zinc-50 px-3 text-[14px] font-semibold text-zinc-800 active:bg-zinc-100"
+              aria-expanded={showSchedule}
+            >
+              <CalendarDays className="h-5 w-5" aria-hidden />
+              {showSchedule ? "닫기" : "달력 열기"}
+            </button>
+          </div>
+
+          {showSchedule ? (
+            <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <label className="block">
+                <span className="mb-2 block text-[15px] font-medium text-zinc-700">
+                  {workPeriod === "one_off" ? "근무일" : "시작일"}
+                </span>
+                <input
+                  type="date"
+                  value={workStartDate}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setWorkStartDate(v);
+                    if (workPeriod === "one_off") setWorkEndDate(v);
+                  }}
+                  className="min-h-[56px] w-full rounded-2xl border-2 border-zinc-200 bg-white px-4 text-[16px] text-zinc-900 outline-none ring-blue-500/30 focus:border-blue-500 focus:ring-4"
+                />
+              </label>
+              {workPeriod === "one_off" ? null : (
+                <label className="block">
+                  <span className="mb-2 block text-[15px] font-medium text-zinc-700">
+                    종료일 (선택)
+                  </span>
+                  <input
+                    type="date"
+                    value={workEndDate}
+                    onChange={(e) => setWorkEndDate(e.target.value)}
+                    min={workStartDate || undefined}
+                    className="min-h-[56px] w-full rounded-2xl border-2 border-zinc-200 bg-white px-4 text-[16px] text-zinc-900 outline-none ring-blue-500/30 focus:border-blue-500 focus:ring-4"
+                  />
+                </label>
+              )}
+            </div>
+          ) : null}
+        </section>
+
+        <div>
           <FieldLabel id="jp-employer">고용주 표시명 (계약서 상단)</FieldLabel>
           <input
             id="jp-employer"
@@ -199,23 +317,43 @@ export function JobPostDraftForm() {
           ) : null}
         </div>
 
-        <div>
-          <FieldLabel id="jp-hours">주 근무시간 (시간)</FieldLabel>
-          <input
-            id="jp-hours"
-            inputMode="decimal"
-            value={weeklyHoursRaw}
-            onChange={(e) => setWeeklyHoursRaw(e.target.value)}
-            className="min-h-[56px] w-full rounded-2xl border-2 border-zinc-200 bg-white px-4 text-[18px] text-zinc-900 outline-none ring-blue-500/30 focus:border-blue-500 focus:ring-4"
-          />
-          {insuranceHint ? (
-            <p className="mt-3 rounded-2xl bg-blue-50 px-4 py-3 text-[15px] leading-relaxed text-blue-950">
-              환산 시 월 근로시간이 60시간 이상에 가깝습니다.{" "}
-              <strong>4대 보험 가입 대상일 수 있습니다</strong>. 실제로는
-              고용·소득 형태에 따라 달라져요.
+        {workPeriod === "long" ? (
+          <div>
+            <FieldLabel id="jp-hours">주 근무시간 (시간)</FieldLabel>
+            <input
+              id="jp-hours"
+              inputMode="decimal"
+              value={weeklyHoursRaw}
+              onChange={(e) => setWeeklyHoursRaw(e.target.value)}
+              className="min-h-[56px] w-full rounded-2xl border-2 border-zinc-200 bg-white px-4 text-[18px] text-zinc-900 outline-none ring-blue-500/30 focus:border-blue-500 focus:ring-4"
+            />
+            {insuranceHint ? (
+              <p className="mt-3 rounded-2xl bg-blue-50 px-4 py-3 text-[15px] leading-relaxed text-blue-950">
+                환산 시 월 근로시간이 60시간 이상에 가깝습니다.{" "}
+                <strong>4대 보험 가입 대상일 수 있습니다</strong>. 실제로는
+                고용·소득 형태에 따라 달라져요.
+              </p>
+            ) : null}
+          </div>
+        ) : workPeriod === "one_off" ? (
+          <div>
+            <FieldLabel id="jp-oneoff-hours">총 근무시간 (시간)</FieldLabel>
+            <input
+              id="jp-oneoff-hours"
+              inputMode="decimal"
+              value={oneOffHoursRaw}
+              onChange={(e) => setOneOffHoursRaw(e.target.value)}
+              className="min-h-[56px] w-full rounded-2xl border-2 border-zinc-200 bg-white px-4 text-[18px] text-zinc-900 outline-none ring-blue-500/30 focus:border-blue-500 focus:ring-4"
+            />
+            <p className="mt-2 text-[14px] leading-relaxed text-zinc-500">
+              일회성은 “주 근무시간” 대신 하루(1회) 기준 총 시간을 적는 게 자연스러워요.
             </p>
-          ) : null}
-        </div>
+          </div>
+        ) : (
+          <div className="rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-[15px] leading-relaxed text-zinc-600">
+            단기 공고는 주 근무시간이 꼭 필요하지 않아요. 아래 “업무 내용”에 근무시간대를 적어 주세요.
+          </div>
+        )}
 
         <div>
           <FieldLabel id="jp-place">근무지</FieldLabel>
@@ -245,19 +383,6 @@ export function JobPostDraftForm() {
             placeholder="구체적으로 적을수록 근로계약서 초안에 잘 반영돼요."
             className="w-full rounded-2xl border-2 border-zinc-200 bg-white px-4 py-3 text-[18px] text-zinc-900 outline-none ring-blue-500/30 focus:border-blue-500 focus:ring-4"
           />
-        </div>
-
-        <div>
-          <FieldLabel id="jp-worker-preview">근로자 이름 (미리보기용)</FieldLabel>
-          <input
-            id="jp-worker-preview"
-            value={workerPreviewName}
-            onChange={(e) => setWorkerPreviewName(e.target.value)}
-            className="min-h-[56px] w-full rounded-2xl border-2 border-zinc-200 bg-white px-4 text-[18px] text-zinc-900 outline-none ring-blue-500/30 focus:border-blue-500 focus:ring-4"
-          />
-          <p className="mt-1 text-[14px] text-zinc-500">
-            실제 채용 확정 시 본인 이름으로 바뀝니다.
-          </p>
         </div>
 
         {formError ? (
@@ -305,17 +430,25 @@ export function JobPostDraftForm() {
         ) : null}
       </form>
 
-      {showContract && hourlyParsed !== null && weeklyHoursParsed !== null ? (
-        <div className="pt-4">
-          <SimpleLaborContract
-            employerName={employerName || "고용주(미입력)"}
-            workerName={workerPreviewName}
-            hourlyWageWon={hourlyParsed}
-            workplace={workplace}
-            workDescription={description}
-            weeklyHours={weeklyHoursParsed}
-          />
-        </div>
+      {showContract ? (
+        workPeriod !== "long" ? (
+          <div className="rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-4 text-[15px] leading-relaxed text-zinc-600">
+            표준 근로계약서 초안은 장기(주 근무시간 기반) 공고에서만 미리보기가 지원돼요.
+            단기·일회성은 실제 채용 확정 시 일정에 맞춰 계약서를 작성하게 됩니다.
+          </div>
+        ) : hourlyParsed !== null && weeklyHoursParsed !== null ? (
+          <div className="pt-4">
+            <SimpleLaborContract
+              employerName={employerName || "고용주(미입력)"}
+              workerName={"지원자(미정)"}
+              hourlyWageWon={hourlyParsed}
+              workplace={workplace}
+              workDescription={description}
+              weeklyHours={weeklyHoursParsed}
+              contractStartLabel={formatDateLabel(workStartDate)}
+            />
+          </div>
+        ) : null
       ) : null}
 
       <p className="text-center text-[15px] text-zinc-500">

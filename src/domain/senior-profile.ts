@@ -16,6 +16,8 @@ export type SeniorProfileDraft = {
   bio: string;
   /** 연락처 — 서버/앱에서는 마스킹·MFA 정책 적용 (클라이언트 임시 저장용) */
   phone: string;
+  /** 이력서 사진 — 압축 JPEG data URL (웹·동기화 공통; 갤러리/카메라) */
+  resumePhoto: string;
   updatedAt: string;
 };
 
@@ -27,8 +29,17 @@ export function emptySeniorProfileDraft(): SeniorProfileDraft {
     tagIds: [],
     bio: "",
     phone: "",
+    resumePhoto: "",
     updatedAt: new Date(0).toISOString(),
   };
+}
+
+/** 마법사 1·2단계(근무 가능·관심 분야)까지 채워져야 공고 지원 가능으로 본다. */
+export function isResumeCompleteForApply(draft: SeniorProfileDraft): boolean {
+  return (
+    draft.availabilityIds.length > 0 &&
+    draft.categorySlugs.length > 0
+  );
 }
 
 /** UI 옵션 — DB enum과 별도로 표시용 (앱에서도 동일 상수 import) */

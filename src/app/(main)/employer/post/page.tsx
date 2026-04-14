@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { Undo2 } from "lucide-react";
 
 import { EmployerPostBody } from "@/app/(main)/employer/post/employer-post-body";
 import { skipIdentityGate } from "@/lib/auth/identity-policy";
@@ -35,9 +36,10 @@ export default async function EmployerPostPage() {
         <div className="mx-auto flex max-w-lg items-center gap-3">
           <Link
             href="/?view=manage"
-            className="text-[16px] font-medium text-blue-600 underline"
+            className="inline-flex min-h-[48px] items-center gap-2 rounded-2xl border-2 border-zinc-200 bg-white px-4 text-[16px] font-semibold text-zinc-900 shadow-sm active:bg-zinc-50"
           >
-            ← 뒤로
+            <Undo2 className="h-5 w-5" aria-hidden />
+            고용 관리로
           </Link>
           <h1 className="text-[22px] font-semibold text-zinc-900">
             공고 등록

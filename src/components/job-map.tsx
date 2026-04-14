@@ -108,6 +108,9 @@ type Props = {
   isActive?: boolean;
   jobPins: JobPin[];
   mapPinsMeta?: MapPinsMeta;
+  /** 이력서 저장 후 이 공고 시트를 다시 열 때 (지도 탭) */
+  resumeRevealJobId?: string | null;
+  onResumeRevealConsumed?: () => void;
 };
 
 function locationHintText(
@@ -243,13 +246,24 @@ function JobMapFallback({
   jobPins,
   mapPinsMeta,
   isActive = true,
+  resumeRevealJobId,
+  onResumeRevealConsumed,
 }: {
   jobPins: JobPin[];
   mapPinsMeta?: MapPinsMeta;
   isActive?: boolean;
+  resumeRevealJobId?: string | null;
+  onResumeRevealConsumed?: () => void;
 }) {
   const [selected, setSelected] = useState<JobPin | null>(null);
   const { region: preferredRegion } = usePreferredRegion();
+
+  useEffect(() => {
+    if (!resumeRevealJobId) return;
+    const pin = jobPins.find((j) => j.id === resumeRevealJobId);
+    if (pin) setSelected(pin);
+    onResumeRevealConsumed?.();
+  }, [resumeRevealJobId, jobPins, onResumeRevealConsumed]);
 
   const fallbackListItems = useMemo((): ViewportJobRow[] => {
     if (jobPins.length === 0) return [];
@@ -310,7 +324,11 @@ function JobMapFallback({
           />
         ) : null}
       </div>
-      <JobBottomSheet job={selected} onClose={() => setSelected(null)} />
+      <JobBottomSheet
+        job={selected}
+        onClose={() => setSelected(null)}
+        resumePanelMode="map"
+      />
     </div>
   );
 }
@@ -320,11 +338,15 @@ function JobMapWithSdk({
   jobPins,
   mapPinsMeta,
   isActive = true,
+  resumeRevealJobId,
+  onResumeRevealConsumed,
 }: {
   kakaoMapAppKey: string;
   jobPins: JobPin[];
   mapPinsMeta?: MapPinsMeta;
   isActive?: boolean;
+  resumeRevealJobId?: string | null;
+  onResumeRevealConsumed?: () => void;
 }) {
   const [, error] = useKakaoLoader({
     appkey: kakaoMapAppKey,
@@ -348,6 +370,13 @@ function JobMapWithSdk({
   const [viewportJobItems, setViewportJobItems] = useState<ViewportJobRow[]>(
     []
   );
+
+  useEffect(() => {
+    if (!resumeRevealJobId) return;
+    const pin = jobPins.find((j) => j.id === resumeRevealJobId);
+    if (pin) setSelected(pin);
+    onResumeRevealConsumed?.();
+  }, [resumeRevealJobId, jobPins, onResumeRevealConsumed]);
 
   const recalcVisiblePins = useCallback(() => {
     const map = mapRef.current;
@@ -657,7 +686,11 @@ function JobMapWithSdk({
         }}
       />
 
-      <JobBottomSheet job={selected} onClose={() => setSelected(null)} />
+      <JobBottomSheet
+        job={selected}
+        onClose={() => setSelected(null)}
+        resumePanelMode="map"
+      />
     </div>
   );
 }
@@ -667,6 +700,8 @@ export function JobMap({
   jobPins,
   mapPinsMeta,
   isActive = true,
+  resumeRevealJobId,
+  onResumeRevealConsumed,
 }: Props) {
   const key = kakaoMapAppKey.trim();
   if (!key) {
@@ -675,6 +710,8 @@ export function JobMap({
         jobPins={jobPins}
         mapPinsMeta={mapPinsMeta}
         isActive={isActive}
+        resumeRevealJobId={resumeRevealJobId}
+        onResumeRevealConsumed={onResumeRevealConsumed}
       />
     );
   }
@@ -684,6 +721,8 @@ export function JobMap({
       jobPins={jobPins}
       mapPinsMeta={mapPinsMeta}
       isActive={isActive}
+      resumeRevealJobId={resumeRevealJobId}
+      onResumeRevealConsumed={onResumeRevealConsumed}
     />
   );
 }

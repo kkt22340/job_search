@@ -44,6 +44,9 @@ CREATE TABLE public.profiles (
   avatar_url TEXT,
   employer_without_business BOOLEAN NOT NULL DEFAULT FALSE,
   birth_year INTEGER NULL,
+  -- 고용주: 로그인 아이디(소문자). Supabase Auth email 은 {login_id}@도메인 형태로 매핑
+  login_id TEXT,
+  residence TEXT,
   -- PASS·휴대폰 등 본인인증 성공 시각(유료 인증은 필요한 액션 직전에만 사용)
   identity_verified_at TIMESTAMPTZ NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -53,6 +56,9 @@ CREATE TABLE public.profiles (
     OR (birth_year >= 1900 AND birth_year <= 2100)
   )
 );
+
+CREATE UNIQUE INDEX profiles_login_id_unique ON public.profiles (login_id)
+  WHERE login_id IS NOT NULL;
 
 CREATE INDEX profiles_role_idx ON public.profiles (role);
 
@@ -99,6 +105,15 @@ CREATE TABLE public.job_postings (
   tags JSONB NOT NULL DEFAULT '[]'::JSONB,
   wage_hourly NUMERIC(12, 2),
   employment_type TEXT,
+  /**
+   * 공고 기간 성격(UX 용) — 일회성/단기/장기.
+   * 지도/리스트 필터링에 사용 예정.
+   */
+  work_period TEXT NOT NULL DEFAULT 'short' CHECK (work_period IN ('one_off', 'short', 'long')),
+  /** 근무 시작일(선택) — 일회성은 시작=종료로 저장 */
+  work_start_date DATE,
+  /** 근무 종료일(선택) — 일회성은 시작=종료로 저장 */
+  work_end_date DATE,
   lat DOUBLE PRECISION,
   lng DOUBLE PRECISION,
   address TEXT,
@@ -226,7 +241,12 @@ DECLARE
   resolved_role public.user_role;
   ewob boolean;
   byear integer;
+  lid text;
+  res_text text;
+  phone_val text;
 BEGIN
+  PERFORM set_config('row_security', 'off', true);
+
   IF r IN ('employer', 'senior', 'admin') THEN
     resolved_role := r::public.user_role;
   ELSIF (meta ->> 'account_kind') = 'employer_informal' THEN
@@ -235,16 +255,32 @@ BEGIN
     resolved_role := 'senior'::public.user_role;
   END IF;
 
-  ewob := COALESCE((meta ->> 'employer_without_business')::boolean, false);
+  ewob := false;
   IF (meta ->> 'account_kind') = 'employer_informal' THEN
+    ewob := true;
+  ELSIF lower(COALESCE(meta ->> 'employer_without_business', '')) IN (
+    'true',
+    't',
+    '1'
+  ) THEN
     ewob := true;
   END IF;
 
   IF (meta ->> 'birth_year') ~ '^\d{4}$' THEN
     byear := (meta ->> 'birth_year')::integer;
+  ELSIF (meta ->> 'birth_date') ~ '^\d{4}-\d{2}-\d{2}$' THEN
+    byear := SUBSTRING(meta ->> 'birth_date', 1, 4)::integer;
   ELSE
     byear := NULL;
   END IF;
+
+  lid := NULLIF(LOWER(TRIM(meta ->> 'login_id')), '');
+
+  phone_val := COALESCE(
+    NULLIF(TRIM(COALESCE(NEW.phone::text, '')), ''),
+    NULLIF(TRIM(meta ->> 'phone'), '')
+  );
+  res_text := NULLIF(TRIM(meta ->> 'residence'), '');
 
   INSERT INTO public.profiles (
     id,
@@ -252,7 +288,9 @@ BEGIN
     role,
     phone,
     employer_without_business,
-    birth_year
+    birth_year,
+    login_id,
+    residence
   )
   VALUES (
     NEW.id,
@@ -262,18 +300,71 @@ BEGIN
       'User'
     ),
     resolved_role,
-    NEW.phone,
+    phone_val,
     ewob,
-    byear
+    byear,
+    lid,
+    res_text
   );
   RETURN NEW;
 END;
 $$;
 
+ALTER FUNCTION public.handle_new_user() OWNER TO postgres;
+
 CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW
   EXECUTE FUNCTION public.handle_new_user();
+
+-- 고용주 표시명만 노출 (시니어 지원 현황 등 — phone 컬럼 미포함)
+CREATE OR REPLACE FUNCTION public.employer_profiles_public(p_ids uuid[])
+RETURNS TABLE (id uuid, display_name text)
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF auth.uid() IS NULL THEN
+    RETURN;
+  END IF;
+  IF p_ids IS NULL OR array_length(p_ids, 1) IS NULL THEN
+    RETURN;
+  END IF;
+  RETURN QUERY
+  SELECT p.id, p.display_name
+  FROM public.profiles AS p
+  WHERE p.role = 'employer'::public.user_role
+    AND p.id = ANY (p_ids);
+END;
+$$;
+
+ALTER FUNCTION public.employer_profiles_public(uuid[]) OWNER TO postgres;
+
+REVOKE ALL ON FUNCTION public.employer_profiles_public(uuid[]) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.employer_profiles_public(uuid[]) TO authenticated;
+
+-- 관리자 여부 — profiles RLS 정책에서 직접 서브쿼리하면 무한 재귀(infinite recursion) 발생하므로 SECURITY DEFINER 로만 조회
+CREATE OR REPLACE FUNCTION public.is_requester_admin()
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.profiles AS p
+    WHERE p.id = auth.uid()
+      AND p.role = 'admin'::public.user_role
+  );
+$$;
+
+ALTER FUNCTION public.is_requester_admin() OWNER TO postgres;
+
+REVOKE ALL ON FUNCTION public.is_requester_admin() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.is_requester_admin() TO authenticated;
 
 -- ---------------------------------------------------------------------------
 -- RLS 활성화
@@ -287,12 +378,18 @@ ALTER TABLE public.neighborhood_settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.job_applications ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.job_moderation_logs ENABLE ROW LEVEL SECURITY;
 
--- profiles: 본인 행 읽기/수정
-CREATE POLICY "profiles_select_own_or_public_minimal"
+-- profiles: 본인만 전체 행 조회 · 관리자는 전체(검수 등) — 타인 phone 은 클라이언트에서 조회 불가
+CREATE POLICY "profiles_select_self"
   ON public.profiles
   FOR SELECT
   TO authenticated
-  USING (true);
+  USING (id = auth.uid());
+
+CREATE POLICY "profiles_select_admin"
+  ON public.profiles
+  FOR SELECT
+  TO authenticated
+  USING (public.is_requester_admin());
 
 CREATE POLICY "profiles_update_own"
   ON public.profiles
@@ -361,35 +458,14 @@ CREATE POLICY "job_postings_select_admin"
   ON public.job_postings
   FOR SELECT
   TO authenticated
-  USING (
-    EXISTS (
-      SELECT 1
-      FROM public.profiles AS ad
-      WHERE ad.id = auth.uid ()
-        AND ad.role = 'admin'::public.user_role
-    )
-  );
+  USING (public.is_requester_admin());
 
 CREATE POLICY "job_postings_update_admin"
   ON public.job_postings
   FOR UPDATE
   TO authenticated
-  USING (
-    EXISTS (
-      SELECT 1
-      FROM public.profiles AS ad
-      WHERE ad.id = auth.uid ()
-        AND ad.role = 'admin'::public.user_role
-    )
-  )
-  WITH CHECK (
-    EXISTS (
-      SELECT 1
-      FROM public.profiles AS ad
-      WHERE ad.id = auth.uid ()
-        AND ad.role = 'admin'::public.user_role
-    )
-  );
+  USING (public.is_requester_admin())
+  WITH CHECK (public.is_requester_admin());
 
 -- senior_profiles: 본인만 읽기/쓰기 (고용주 조회는 서비스 롤 또는 별도 API 권장)
 CREATE POLICY "senior_profiles_select_own"
@@ -437,14 +513,19 @@ CREATE POLICY "neighborhood_update_own"
   USING (user_id = auth.uid())
   WITH CHECK (user_id = auth.uid());
 
--- job_applications: 지원자·해당 공고 고용주
-CREATE POLICY "applications_select_parties"
+-- job_applications: 정책 분리 — 시니어 본인 조회는 job_postings RLS 를 타지 않음(관리자 정책과의 재귀 방지)
+CREATE POLICY "applications_select_as_senior"
+  ON public.job_applications
+  FOR SELECT
+  TO authenticated
+  USING (senior_id = auth.uid());
+
+CREATE POLICY "applications_select_as_employer"
   ON public.job_applications
   FOR SELECT
   TO authenticated
   USING (
-    senior_id = auth.uid()
-    OR EXISTS (
+    EXISTS (
       SELECT 1
       FROM public.job_postings j
       WHERE j.id = job_applications.job_id
@@ -458,19 +539,39 @@ CREATE POLICY "applications_insert_senior"
   TO authenticated
   WITH CHECK (senior_id = auth.uid());
 
-CREATE POLICY "applications_update_parties"
+CREATE POLICY "applications_update_senior_own"
+  ON public.job_applications
+  FOR UPDATE
+  TO authenticated
+  USING (senior_id = auth.uid())
+  WITH CHECK (senior_id = auth.uid());
+
+CREATE POLICY "applications_update_employer_for_own_jobs"
   ON public.job_applications
   FOR UPDATE
   TO authenticated
   USING (
-    senior_id = auth.uid()
-    OR EXISTS (
+    EXISTS (
+      SELECT 1
+      FROM public.job_postings j
+      WHERE j.id = job_applications.job_id
+        AND j.employer_id = auth.uid()
+    )
+  )
+  WITH CHECK (
+    EXISTS (
       SELECT 1
       FROM public.job_postings j
       WHERE j.id = job_applications.job_id
         AND j.employer_id = auth.uid()
     )
   );
+
+CREATE POLICY "applications_delete_senior_own"
+  ON public.job_applications
+  FOR DELETE
+  TO authenticated
+  USING (senior_id = auth.uid());
 
 -- moderation_logs: 기본은 서비스 롤에서만 삽입 권장 — 여기서는 고용주 본인 공고에 한해 조회
 CREATE POLICY "moderation_logs_select_employer_own_jobs"
@@ -490,27 +591,13 @@ CREATE POLICY "moderation_logs_select_admin"
   ON public.job_moderation_logs
   FOR SELECT
   TO authenticated
-  USING (
-    EXISTS (
-      SELECT 1
-      FROM public.profiles AS ad
-      WHERE ad.id = auth.uid ()
-        AND ad.role = 'admin'::public.user_role
-    )
-  );
+  USING (public.is_requester_admin());
 
 CREATE POLICY "moderation_logs_insert_admin"
   ON public.job_moderation_logs
   FOR INSERT
   TO authenticated
-  WITH CHECK (
-    EXISTS (
-      SELECT 1
-      FROM public.profiles AS ad
-      WHERE ad.id = auth.uid ()
-        AND ad.role = 'admin'::public.user_role
-    )
-  );
+  WITH CHECK (public.is_requester_admin());
 
 -- ---------------------------------------------------------------------------
 -- 시드: 대분류 4종 + 예시 소분류 (PRD §8.1)

@@ -18,11 +18,6 @@ export function IdentityVerificationExplainer({ variant }: { variant: Variant })
             ? "공고를 올리시려면 본인인증이 필요합니다"
             : "신뢰도를 위해 본인인증을 완료해 주세요"}
         </p>
-        <p className="mt-2">
-          회원가입은 이메일로 무료로 진행하고,{" "}
-          <strong>유료 본인인증(PASS·휴대폰 등)은 꼭 필요한 화면에서만</strong>{" "}
-          띄워 비용을 줄입니다. 아래 UI는 연동 전 플레이스홀더예요.
-        </p>
       </div>
 
       <PhoneAuthPlaceholder />

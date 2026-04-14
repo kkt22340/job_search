@@ -29,7 +29,7 @@ export function PhoneAuthPlaceholder() {
           <p className="mt-2 text-[15px] leading-relaxed text-zinc-600">
             {enabled
               ? "인증번호를 받아 입력하면 가입을 마칠 수 있어요."
-              : "SMS 인증은 통신·정책 준비 후 켤 예정이에요. 지금은 아래 이메일로 가입해 주세요."}
+              : "SMS 인증은 통신·정책 준비 후 켤 예정이에요. 지금은 아래 아이디로 가입해 주세요."}
           </p>
           <div className="mt-4 flex flex-col gap-3 sm:flex-row">
             <input

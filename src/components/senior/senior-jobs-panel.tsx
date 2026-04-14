@@ -9,7 +9,9 @@ import { PresetRegionPicker } from "@/components/region/preset-region-picker";
 import { useMyLocation } from "@/hooks/use-my-location";
 import { usePreferredRegion } from "@/hooks/use-preferred-region";
 import type { PresetRegion } from "@/lib/geo-defaults";
+import { isSeniorRoleForClient } from "@/lib/auth/resolve-senior-role";
 import { haversineMeters } from "@/lib/geo/distance";
+import { consumePendingOpenJobAfterResume } from "@/lib/resume/pending-apply-navigation";
 import { createClient } from "@/lib/supabase";
 import type { JobPin } from "@/types/job";
 
@@ -59,6 +61,9 @@ export function SeniorJobsPanel({
   const [appliedJobIds, setAppliedJobIds] = useState<Set<string>>(
     () => new Set()
   );
+  const [mapResumeRevealJobId, setMapResumeRevealJobId] = useState<
+    string | null
+  >(null);
   const { state: locState } = useMyLocation();
   const { region, setRegion } = usePreferredRegion();
 
@@ -76,20 +81,34 @@ export function SeniorJobsPanel({
       .select("role")
       .eq("id", user.id)
       .maybeSingle();
-    if (profile?.role !== "senior") {
+    if (!isSeniorRoleForClient(profile, user)) {
       setAppliedJobIds(new Set());
       return;
     }
     const { data: apps } = await supabase
       .from("job_applications")
       .select("job_id")
-      .eq("senior_id", user.id);
+      .eq("senior_id", user.id)
+      .neq("status", "withdrawn");
     setAppliedJobIds(new Set((apps ?? []).map((a) => a.job_id as string)));
   }, []);
 
   useEffect(() => {
     void reloadAppliedJobIds();
   }, [reloadAppliedJobIds]);
+
+  useEffect(() => {
+    if (jobPins.length === 0) return;
+    const { jobId, mode } = consumePendingOpenJobAfterResume();
+    if (!jobId) return;
+    if (mode) setMode(mode);
+    const pin = jobPins.find((j) => j.id === jobId);
+    if (mode === "map") {
+      setMapResumeRevealJobId(jobId);
+    } else if (pin) {
+      setSelected(pin);
+    }
+  }, [jobPins]);
 
   useEffect(() => {
     setSelected(null);
@@ -170,6 +189,8 @@ export function SeniorJobsPanel({
             jobPins={jobPins}
             mapPinsMeta={mapPinsMeta}
             isActive
+            resumeRevealJobId={mapResumeRevealJobId}
+            onResumeRevealConsumed={() => setMapResumeRevealJobId(null)}
           />
         ) : (
           <div className="min-h-0 h-full overflow-y-auto px-4 pb-32 pt-6">
@@ -237,6 +258,7 @@ export function SeniorJobsPanel({
             job={selected}
             onClose={() => setSelected(null)}
             onApplyStateChange={() => void reloadAppliedJobIds()}
+            resumePanelMode={mode}
           />
         ) : null}
       </div>

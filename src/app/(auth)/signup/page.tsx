@@ -9,8 +9,14 @@ import {
   ACCOUNT_KIND_LABELS,
   type AccountKind,
 } from "@/domain/account-kind";
+import { normalizeKoreanMobileLocalDigits } from "@/lib/auth/phone-normalize";
 import { buildSignupUserMetadata } from "@/lib/auth/signup-metadata";
-import { createClient } from "@/lib/supabase";
+
+import {
+  checkPhoneAvailableForSignup,
+  signUpEmployer,
+  signUpSenior,
+} from "./actions";
 
 const KINDS: AccountKind[] = [
   "employer_business",
@@ -18,15 +24,25 @@ const KINDS: AccountKind[] = [
   "senior",
 ];
 
+function defaultBirthDateAge50(): string {
+  const d = new Date();
+  d.setFullYear(d.getFullYear() - 50);
+  return d.toISOString().slice(0, 10);
+}
+
 export default function SignupPage() {
   const router = useRouter();
   const [accountKind, setAccountKind] = useState<AccountKind | null>(null);
   const [displayName, setDisplayName] = useState("");
-  const [email, setEmail] = useState("");
+  const [employerPhone, setEmployerPhone] = useState("");
+  const [phoneHint, setPhoneHint] = useState<string | null>(null);
   const [password, setPassword] = useState("");
-  const [birthYear, setBirthYear] = useState("");
+  const [birthDate, setBirthDate] = useState(defaultBirthDateAge50);
+  const [residence, setResidence] = useState("");
+  const [seniorPhone, setSeniorPhone] = useState("");
+  const [seniorPassword, setSeniorPassword] = useState("");
+  const [seniorPasswordConfirm, setSeniorPasswordConfirm] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [info, setInfo] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -43,33 +59,62 @@ export default function SignupPage() {
       return;
     }
     setError(null);
-    setInfo(null);
     setLoading(true);
 
     try {
-      const supabase = createClient();
+      if (
+        (accountKind === "employer_business" ||
+          accountKind === "employer_informal") &&
+        phoneHint === "이미 가입된 번호예요."
+      ) {
+        setError("다른 휴대폰 번호를 사용해 주세요.");
+        setLoading(false);
+        return;
+      }
 
       if (accountKind === "senior") {
         const name = displayName.trim();
         if (!name) {
-          setError("이름 또는 닉네임을 입력해 주세요.");
+          setError("이름을 입력해 주세요.");
           setLoading(false);
           return;
         }
-        const meta = buildSignupUserMetadata({
+        if (!birthDate) {
+          setError("생년월일을 선택해 주세요.");
+          setLoading(false);
+          return;
+        }
+        const res = residence.trim();
+        if (!res) {
+          setError("거주지를 입력해 주세요.");
+          setLoading(false);
+          return;
+        }
+        if (!normalizeKoreanMobileLocalDigits(seniorPhone)) {
+          setError("휴대폰 번호를 확인해 주세요. (예: 01012345678)");
+          setLoading(false);
+          return;
+        }
+        if (seniorPassword.length < 6) {
+          setError("비밀번호는 6자 이상으로 입력해 주세요.");
+          setLoading(false);
+          return;
+        }
+        if (seniorPassword !== seniorPasswordConfirm) {
+          setError("비밀번호가 서로 일치하지 않아요.");
+          setLoading(false);
+          return;
+        }
+
+        const result = await signUpSenior({
+          phone: seniorPhone,
+          password: seniorPassword,
           displayName: name,
-          accountKind: "senior",
-          birthYear: birthYear || null,
+          birthDate,
+          residence: res,
         });
-        const { error: anonError } = await supabase.auth.signInAnonymously({
-          options: { data: meta },
-        });
-        if (anonError) {
-          setError(
-            anonError.message.includes("Anonymous")
-              ? "시니어 가입을 위해 Supabase 대시보드에서 Anonymous 로그인을 켜 주세요. (Authentication → Providers → Anonymous)"
-              : anonError.message
-          );
+        if (!result.ok) {
+          setError(result.error);
           setLoading(false);
           return;
         }
@@ -78,25 +123,18 @@ export default function SignupPage() {
         return;
       }
 
-      const meta = buildSignupUserMetadata({
+      const result = await signUpEmployer({
+        phone: employerPhone,
+        password,
         displayName,
         accountKind,
-        birthYear: null,
       });
-      const { error: signError } = await supabase.auth.signUp({
-        email: email.trim(),
-        password,
-        options: {
-          data: meta,
-        },
-      });
-      if (signError) {
-        setError(signError.message);
+      if (!result.ok) {
+        setError(result.error);
         setLoading(false);
         return;
       }
-      setInfo("가입이 완료되었어요. 로그인해 주세요.");
-      setLoading(false);
+      router.replace("/login?registered=1");
       router.refresh();
     } catch {
       setError("가입 중 오류가 났어요. 잠시 후 다시 시도해 주세요.");
@@ -113,9 +151,10 @@ export default function SignupPage() {
         회원가입
       </h1>
       <p className="mt-2 text-[16px] leading-relaxed text-zinc-600">
-        <strong>시니어</strong>는 이메일 없이 시작할 수 있어요.{" "}
-        <strong>고용주</strong>는 이메일로 가입합니다. 유료 본인인증은 이후
-        휴대폰 연동 시, 필요한 화면에서만 받습니다.
+        <strong>구직자·고용주 모두</strong> 휴대폰 번호와 비밀번호로 가입해요. (로그인
+        시에도 아이디 대신 같은 번호를 입력합니다.){" "}
+        <strong>구직자(시니어)</strong>는 만 50세 이상 기준으로 이름·생년월일·거주지도
+        받습니다.
       </p>
 
       <section className="mt-8" aria-labelledby="kind-heading">
@@ -139,8 +178,7 @@ export default function SignupPage() {
                 {ACCOUNT_KIND_LABELS[k]}
                 {k === "senior" ? (
                   <span className="mt-1 block text-[14px] font-normal text-zinc-600">
-                    이메일 없이 이 기기에서 바로 시작해요. 다른 기기·복구는 이후
-                    휴대폰 연결을 권장해요.
+                    생년월일 기본값은 오늘 기준 만 50세예요.
                   </span>
                 ) : null}
               </button>
@@ -155,7 +193,7 @@ export default function SignupPage() {
             htmlFor="su-name"
             className="mb-2 block text-[17px] font-medium text-zinc-800"
           >
-            이름 또는 닉네임
+            {isSenior ? "이름" : "이름 또는 닉네임"}
           </label>
           <input
             id="su-name"
@@ -168,24 +206,163 @@ export default function SignupPage() {
           />
         </div>
 
+        {isSenior ? (
+          <>
+            <div>
+              <label
+                htmlFor="su-birth-date"
+                className="mb-2 block text-[17px] font-medium text-zinc-800"
+              >
+                생년월일
+              </label>
+              <input
+                id="su-birth-date"
+                type="date"
+                required
+                value={birthDate}
+                onChange={(e) => setBirthDate(e.target.value)}
+                className="min-h-[56px] w-full rounded-2xl border-2 border-zinc-200 bg-white px-4 text-[18px] text-zinc-900 outline-none ring-blue-500/30 focus:border-blue-500 focus:ring-4"
+              />
+              <p className="mt-1 text-[14px] text-zinc-500">
+                구직자 기준은 만 50세 이상이에요. 기본 선택은 오늘 기준 50세입니다.
+              </p>
+            </div>
+            <div>
+              <label
+                htmlFor="su-residence"
+                className="mb-2 block text-[17px] font-medium text-zinc-800"
+              >
+                거주지
+              </label>
+              <input
+                id="su-residence"
+                type="text"
+                autoComplete="street-address"
+                required
+                placeholder="예: 경기 안산시 단원구, 서울 강남구"
+                value={residence}
+                onChange={(e) => setResidence(e.target.value)}
+                className="min-h-[56px] w-full rounded-2xl border-2 border-zinc-200 bg-white px-4 text-[18px] text-zinc-900 outline-none ring-blue-500/30 focus:border-blue-500 focus:ring-4"
+              />
+            </div>
+            <div>
+              <label
+                htmlFor="su-senior-phone"
+                className="mb-2 block text-[17px] font-medium text-zinc-800"
+              >
+                휴대폰 번호 (로그인 ID)
+              </label>
+              <input
+                id="su-senior-phone"
+                type="tel"
+                inputMode="numeric"
+                autoComplete="tel"
+                required
+                placeholder="01012345678"
+                value={seniorPhone}
+                onChange={(e) =>
+                  setSeniorPhone(e.target.value.replace(/[^\d]/g, ""))
+                }
+                className="min-h-[56px] w-full rounded-2xl border-2 border-zinc-200 bg-white px-4 text-[18px] text-zinc-900 outline-none ring-blue-500/30 focus:border-blue-500 focus:ring-4"
+              />
+              <p className="mt-1 text-[14px] text-zinc-500">
+                로그인할 때도 이 번호와 비밀번호를 사용해요.
+              </p>
+            </div>
+            <div>
+              <label
+                htmlFor="su-senior-password"
+                className="mb-2 block text-[17px] font-medium text-zinc-800"
+              >
+                비밀번호
+              </label>
+              <input
+                id="su-senior-password"
+                type="password"
+                autoComplete="new-password"
+                required
+                minLength={6}
+                value={seniorPassword}
+                onChange={(e) => setSeniorPassword(e.target.value)}
+                className="min-h-[56px] w-full rounded-2xl border-2 border-zinc-200 bg-white px-4 text-[18px] text-zinc-900 outline-none ring-blue-500/30 focus:border-blue-500 focus:ring-4"
+              />
+            </div>
+            <div>
+              <label
+                htmlFor="su-senior-password2"
+                className="mb-2 block text-[17px] font-medium text-zinc-800"
+              >
+                비밀번호 확인
+              </label>
+              <input
+                id="su-senior-password2"
+                type="password"
+                autoComplete="new-password"
+                required
+                minLength={6}
+                value={seniorPasswordConfirm}
+                onChange={(e) => setSeniorPasswordConfirm(e.target.value)}
+                className="min-h-[56px] w-full rounded-2xl border-2 border-zinc-200 bg-white px-4 text-[18px] text-zinc-900 outline-none ring-blue-500/30 focus:border-blue-500 focus:ring-4"
+              />
+            </div>
+          </>
+        ) : null}
+
         {isEmployer ? (
           <>
             <div>
               <label
-                htmlFor="su-email"
+                htmlFor="su-employer-phone"
                 className="mb-2 block text-[17px] font-medium text-zinc-800"
               >
-                이메일
+                휴대폰 번호 (로그인 ID)
               </label>
               <input
-                id="su-email"
-                type="email"
-                autoComplete="email"
+                id="su-employer-phone"
+                type="tel"
+                inputMode="numeric"
+                autoComplete="tel"
                 required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                placeholder="01012345678"
+                value={employerPhone}
+                onChange={(e) => {
+                  setEmployerPhone(e.target.value.replace(/[^\d]/g, ""));
+                  setPhoneHint(null);
+                }}
+                onBlur={(e) => {
+                  void (async () => {
+                    const v = e.target.value;
+                    if (!v.trim()) return;
+                    const r = await checkPhoneAvailableForSignup(v);
+                    if (!r.ok) {
+                      setPhoneHint(r.error);
+                      return;
+                    }
+                    setPhoneHint(
+                      r.available
+                        ? "사용 가능한 번호예요."
+                        : "이미 가입된 번호예요."
+                    );
+                  })();
+                }}
                 className="min-h-[56px] w-full rounded-2xl border-2 border-zinc-200 bg-white px-4 text-[18px] text-zinc-900 outline-none ring-blue-500/30 focus:border-blue-500 focus:ring-4"
               />
+              <p className="mt-1 text-[14px] text-zinc-500">
+                아이디 대신 이 번호로 로그인해요. (하이픈 없이 숫자만)
+              </p>
+              {phoneHint ? (
+                <p
+                  className={`mt-1 text-[14px] ${
+                    phoneHint.startsWith("사용 가능")
+                      ? "text-emerald-700"
+                      : phoneHint.startsWith("이미 가입")
+                        ? "text-red-700"
+                        : "text-zinc-600"
+                  }`}
+                >
+                  {phoneHint}
+                </p>
+              ) : null}
             </div>
             <div>
               <label
@@ -208,32 +385,6 @@ export default function SignupPage() {
           </>
         ) : null}
 
-        {isSenior ? (
-          <div>
-            <label
-              htmlFor="su-birth"
-              className="mb-2 block text-[17px] font-medium text-zinc-800"
-            >
-              출생연도 (선택)
-            </label>
-            <input
-              id="su-birth"
-              type="text"
-              inputMode="numeric"
-              placeholder="예: 1965"
-              maxLength={4}
-              value={birthYear}
-              onChange={(e) =>
-                setBirthYear(e.target.value.replace(/\D/g, "").slice(0, 4))
-              }
-              className="min-h-[56px] w-full rounded-2xl border-2 border-zinc-200 bg-white px-4 text-[18px] text-zinc-900 outline-none ring-blue-500/30 focus:border-blue-500 focus:ring-4"
-            />
-            <p className="mt-1 text-[14px] text-zinc-500">
-              통계·맞춤 안내용이에요. 비워도 가입할 수 있어요.
-            </p>
-          </div>
-        ) : null}
-
         {isEmployer ? (
           <div className="pt-2">
             <PhoneAuthPlaceholder />
@@ -245,12 +396,6 @@ export default function SignupPage() {
             {error}
           </p>
         ) : null}
-        {info ? (
-          <p className="rounded-2xl bg-emerald-50 px-4 py-3 text-[15px] text-emerald-900">
-            {info}
-          </p>
-        ) : null}
-
         <button
           type="submit"
           disabled={loading || !accountKind}
@@ -259,8 +404,8 @@ export default function SignupPage() {
           {loading
             ? "처리 중…"
             : isSenior
-              ? "이메일 없이 시작하기"
-              : "이메일로 가입하기"}
+              ? "가입하고 시작하기"
+              : "휴대폰으로 가입하기"}
         </button>
       </form>
 
